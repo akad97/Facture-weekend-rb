@@ -292,7 +292,38 @@
   .cut span{background:var(--paper); padding:0 10px; position:relative;}
 
   /* ---------- Print ---------- */
+  .dup-alert::before{content:"⚠ DOUBLON DÉTECTÉ"; display:block; font-weight:700; letter-spacing:.04em; margin-bottom:4px;}
+  .dup-modal{
+    position:fixed; inset:0; z-index:1000;
+    display:none; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.55); padding:16px;
+  }
+  .dup-modal.show{display:flex;}
+  .dup-modal-card{
+    background:#fff; max-width:420px; width:100%;
+    border-top:6px solid #b5121b; padding:20px 20px 16px;
+    box-shadow:0 12px 40px rgba(0,0,0,.35);
+    animation:dupPop .18s ease-out;
+  }
+  @keyframes dupPop{from{transform:scale(.94); opacity:0} to{transform:none; opacity:1}}
+  .dup-modal-title{display:flex; align-items:center; gap:10px; margin:0 0 10px; font-size:18px; color:#b5121b;}
+  .dup-modal-icon{
+    flex:none; width:30px; height:30px; border-radius:50%;
+    background:#b5121b; color:#fff; font-weight:700; font-size:18px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .dup-modal-msg{font-size:14px; line-height:1.5; margin:0 0 16px; color:#222;}
+  .dup-modal .btn{width:100%;}
+  /* Téléphones (la page s'affiche dézoomée) : fenêtre plus grande et lisible */
+  @media (hover:none) and (pointer:coarse){
+    .dup-modal-card{max-width:none; width:90vw; padding:5vw 5vw 4vw; border-top-width:1.6vw;}
+    .dup-modal-title{font-size:5.4vw; gap:2.5vw; margin-bottom:3vw;}
+    .dup-modal-icon{width:8vw; height:8vw; font-size:5vw;}
+    .dup-modal-msg{font-size:4.2vw; margin-bottom:5vw;}
+    .dup-modal .btn{font-size:4.2vw; padding:3.5vw;}
+  }
   @media print{
+    .dup-modal{display:none !important;}
     body{background:#fff;}
     .topbar, .panel, .preview-wrap{all:unset; display:block;}
     .app{display:block; padding:0; max-width:none;}
@@ -304,6 +335,13 @@
 </style>
 </head>
 <body>
+<div class="dup-modal no-print" id="dupModal" role="alertdialog" aria-modal="true" aria-labelledby="dupModalTitle" aria-describedby="dupModalMsg">
+  <div class="dup-modal-card">
+    <h3 class="dup-modal-title" id="dupModalTitle"><span class="dup-modal-icon">!</span> Doublon détecté</h3>
+    <p class="dup-modal-msg" id="dupModalMsg"></p>
+    <button type="button" class="btn" id="dupModalOk">J'ai compris</button>
+  </div>
+</div>
 
 <div class="app">
   <div class="topbar">
@@ -617,6 +655,25 @@
     if (drive.numero && isSameReceipt(drive.numero)) return '✓ Ce reçu est déjà enregistré dans le Drive.';
     return checkDuplicate() ? '' : '✓ Vérifié dans le Drive : aucun doublon.';
   }
+  // ---- Fenêtre « Doublon détecté »
+  const dupModal = document.getElementById('dupModal');
+  let lastPopupMsg = '';
+  function showDuplicatePopup(msg, title){
+    document.getElementById('dupModalTitle').lastChild.textContent = ' ' + (title || 'Doublon détecté');
+    document.getElementById('dupModalMsg').textContent = msg;
+    dupModal.classList.add('show');
+    lastPopupMsg = msg;
+    setTimeout(() => document.getElementById('dupModalOk').focus(), 50);
+    if (navigator.vibrate) { try { navigator.vibrate(200); } catch(e){} }
+  }
+  function hideDuplicatePopup(){ dupModal.classList.remove('show'); }
+  document.getElementById('dupModalOk').addEventListener('click', () => {
+    hideDuplicatePopup();
+    els.dupAlert.scrollIntoView({ behavior:'smooth', block:'center' });
+  });
+  dupModal.addEventListener('click', e => { if (e.target === dupModal) hideDuplicatePopup(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hideDuplicatePopup(); });
+
   // Vérifie à nouveau dans le Drive juste avant une action. Bloque seulement si le doublon existe dans le Drive.
   async function guardDuplicate(hintEl){
     if (scriptUrl()) {
@@ -628,7 +685,7 @@
     const msg = checkDuplicate();
     if (msg) {
       if (hintEl) hintEl.textContent = msg;
-      els.dupAlert.scrollIntoView({ behavior:'smooth', block:'center' });
+      showDuplicatePopup(msg + ' Aucun reçu n\'a été créé.');
       return false;
     }
     if (hintEl && drive.status === 'error') hintEl.textContent = '⚠ Drive injoignable : le reçu est créé sans vérification des doublons.';
@@ -855,6 +912,8 @@
     if (fromCheck !== true) scheduleCheck();
     const dup = checkDuplicate();
     els.dupAlert.textContent = dup || '';
+    if (fromCheck === true && dup && dup !== lastPopupMsg && !dupModal.classList.contains('show')) showDuplicatePopup(dup);
+    if (!dup) lastPopupMsg = '';
     els.dupAlert.classList.toggle('show', !!dup);
     els.driveStatus.textContent = driveStatusText();
     scheduleList(false);
@@ -1045,6 +1104,7 @@
       }
       if (res && res.ok === false) {
         hint.textContent = 'Refusé par le Drive : ' + (res.error || 'erreur inconnue');
+        showDuplicatePopup('Le Drive a refusé l\'enregistrement : ' + (res.error || 'erreur inconnue') + '.', 'Enregistrement refusé');
       } else if (res && res.ok) {
         hint.textContent = '✓ Enregistré dans le Drive.';
       } else {
