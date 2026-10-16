@@ -355,8 +355,9 @@
 
     <div class="row2">
       <div class="field">
-        <label for="numero">N° Reçu <span class="req">*</span></label>
-        <input type="text" id="numero" placeholder="ex : 0000" required>
+        <label for="numero">N° Reçu (automatique)</label>
+        <input type="text" id="numero" placeholder="Attribué à l'enregistrement" readonly tabindex="-1" style="background:#eee; font-weight:600">
+        <div class="hint" id="numeroHint">Choisis le centre pour voir le prochain N°.</div>
       </div>
       <div class="field">
         <label for="date">Date <span class="req">*</span></label>
@@ -450,7 +451,7 @@
         <input type="text" id="sheetUrl" placeholder="https://script.google.com/macros/s/.../exec" value="https://script.google.com/macros/s/AKfycbyIswn7r8YxzH-Vvh-zTJrlHRKgb3mtpP_YDwFb4Ux34LctVxGlDZ_VYU6BS4aCirjaCw/exec">
       </div>
       <button class="btn dark" id="saveSheetBtn">Enregistrer dans Google Sheets</button>
-      <div class="hint" id="sheetHint">Ajoute ce reçu comme nouvelle ligne dans la feuille Google Sheets « Formations Week-End ». Colle l'URL du script une fois : elle est retenue sur cet appareil.</div>
+      <div class="hint" id="sheetHint">Ajoute ce reçu dans la feuille Google et lui attribue son N° automatique. Télécharger le PDF ou l'envoyer par WhatsApp l'enregistre aussi automatiquement (une seule fois).</div>
     </div>
 
     <div class="panel-section">
@@ -581,7 +582,7 @@
   function checkParams(){
     return {
       action: 'check',
-      numero: els.numero.value.trim(),
+      numero: assigned ? assigned.numero : '',
       nom: els.nom.value.trim(),
       receveur: els.receveur.value.trim(),
       type: typeLabel(getType()),
@@ -595,7 +596,7 @@
   async function runCheck(){
     const key = checkKey();
     const params = checkParams();
-    if (!scriptUrl() || (!params.numero && !(params.nom && params.receveur && params.type))) {
+    if (!scriptUrl() || !(params.nom && params.receveur && params.type)) {
       drive = { key, status: 'off', numero: null, previous: [] };
       return drive;
     }
@@ -603,7 +604,7 @@
     try {
       const res = await callScript(params);
       if (!res || res.ok === false) throw new Error(res && res.error || 'error');
-      if (checkKey() === key) drive = { key, status: 'ok', numero: res.numero || null, previous: res.previous || [] };
+      if (checkKey() === key) drive = { key, status: 'ok', numero: null, previous: res.previous || [] };
     } catch (e) {
       console.warn('Vérification Drive impossible', e);
       if (checkKey() === key) drive = { key, status: 'error', numero: null, previous: [] };
@@ -620,21 +621,9 @@
   function previousPaid(){
     return driveFresh() ? drive.previous.reduce((s,r) => s + (parseFloat(r.paye) || 0), 0) : 0;
   }
-  // Le N° trouvé dans le Drive correspond-il exactement à ce reçu (même personne, même paiement) ?
-  function isSameReceipt(r){
-    return !!r && norm(r.nom) === norm(els.nom.value) && norm(r.receveur) === norm(els.receveur.value)
-      && norm(r.type) === norm(typeLabel(getType())) && (getType() !== 'mensualite' || norm(r.mois) === norm(moisLabel(getMoisKey())));
-  }
-  function describe(r){
-    return `${r.nom} — ${r.type}${r.mois ? ' ' + r.mois : ''}, reçu par ${r.receveur}${r.date ? ', le ' + fmtDate(r.date) : ''}`;
-  }
   // Message de doublon basé UNIQUEMENT sur les données du Drive (null = pas de doublon)
   function checkDuplicate(){
     if (!driveFresh()) return null;
-    const r = drive.numero;
-    if (r && !isSameReceipt(r)) {
-      return `Le N° de reçu « ${r.numero} » existe déjà dans le Drive (${describe(r)}). Choisis un autre numéro.`;
-    }
     const type = getType();
     if (!type || !drive.previous.length) return null;
     const already = previousPaid();
@@ -652,7 +641,7 @@
     if (drive.key !== checkKey() || drive.status === 'loading') return 'Vérification dans le Drive…';
     if (drive.status === 'off') return '';
     if (drive.status === 'error') return '⚠ Drive injoignable : vérification des doublons impossible pour le moment (connexion internet ?).';
-    if (drive.numero && isSameReceipt(drive.numero)) return '✓ Ce reçu est déjà enregistré dans le Drive.';
+    if (assigned) return '✓ Ce reçu est enregistré dans le Drive sous le N° ' + assigned.numero + '.';
     return checkDuplicate() ? '' : '✓ Vérifié dans le Drive : aucun doublon.';
   }
   // ---- Fenêtre « Doublon détecté »
@@ -689,6 +678,103 @@
       return false;
     }
     if (hintEl && drive.status === 'error') hintEl.textContent = '⚠ Drive injoignable : le reçu est créé sans vérification des doublons.';
+    return true;
+  }
+
+  // ================= Numérotation automatique =================
+  // Le N° est attribué par le script Google au moment de l'enregistrement (unique, par centre).
+  let assigned = null;          // { numero, key } une fois le reçu enregistré
+  let nextPreview = {};         // { centre: 'KAT-0005' } — aperçu du prochain N°
+  function formKey(){
+    return JSON.stringify([els.date.value, norm(els.nom.value), norm(els.payeur.value), els.centre.value, norm(els.receveur.value),
+      getType(), getMoisKey(), els.paye.value, getMoyen()]);
+  }
+  let nextTimer = null;
+  function refreshNext(force){
+    const centre = els.centre.value;
+    if (!centre || !scriptUrl() || (!force && nextPreview[centre])) return;
+    clearTimeout(nextTimer);
+    nextTimer = setTimeout(async () => {
+      try {
+        const res = await callScript({ action: 'next', centre });
+        if (res && res.numero) { nextPreview[centre] = res.numero; render(true); }
+      } catch (e) { /* aperçu seulement */ }
+    }, 300);
+  }
+  let modifiedAfterSave = false;
+  function syncNumero(){
+    if (assigned && assigned.key !== formKey()) {
+      assigned = null;            // le formulaire a changé après l'enregistrement → ce sera un nouveau reçu
+      modifiedAfterSave = true;
+    }
+    const hintEl = document.getElementById('numeroHint');
+    if (assigned) {
+      els.numero.value = assigned.numero;
+      hintEl.textContent = '✓ N° attribué et enregistré dans le Drive.';
+      return;
+    }
+    els.numero.value = '';
+    const prev = nextPreview[els.centre.value];
+    hintEl.textContent = (modifiedAfterSave ? 'Formulaire modifié après enregistrement : un nouveau reçu sera créé. ' : '')
+      + (!els.centre.value ? 'Choisis le centre pour voir le prochain N°.'
+        : (prev ? `Prochain N° prévu : ${prev} (attribué à l'enregistrement).` : 'Le N° sera attribué à l\'enregistrement.'));
+  }
+  function buildPayload(){
+    const type = getType();
+    const total = currentAmount();
+    const deja = previousPaid();
+    const paye = parseFloat(els.paye.value);
+    return {
+      date: els.date.value,
+      nom: els.nom.value.trim(),
+      payeur: els.payeur.value.trim(),
+      centre: els.centre.value,
+      type: typeLabel(type),
+      mois: moisLabel(getMoisKey()),
+      formation: 'Formations Week-End',
+      inscription: type === 'inscription' ? total : 0,
+      participation: type === 'mensualite' ? total : 0,
+      total: total,
+      paye: isNaN(paye) ? '' : paye,
+      reste: Math.max(total - deja - (isNaN(paye) ? 0 : paye), 0),
+      moyen: getMoyen() || '',
+      receveur: els.receveur.value.trim(),
+      whatsapp: normalizePhone(waInput.value) ? prettyPhone(normalizePhone(waInput.value)) : ''
+    };
+  }
+  // Enregistre le reçu dans le Drive (si ce n'est pas déjà fait) et récupère son N° automatique.
+  async function ensureSaved(hintEl){
+    if (assigned && assigned.key === formKey()) return true;
+    if (!scriptUrl()) {
+      hintEl.textContent = "URL du script Google manquante : impossible d'attribuer un N° de reçu.";
+      return false;
+    }
+    if (!(await guardDuplicate(hintEl))) return false;
+    hintEl.textContent = 'Enregistrement dans le Drive et attribution du N°…';
+    let res;
+    try {
+      res = await callScript({ action: 'save', payload: JSON.stringify(buildPayload()) });
+    } catch (err) {
+      console.warn(err);
+      hintEl.textContent = (err && err.message === 'timeout')
+        ? "Pas de réponse du Drive. Regarde dans la feuille Google si le reçu a été ajouté avant de réessayer."
+        : "Drive injoignable : le N° de reçu ne peut pas être attribué. Vérifie ta connexion internet et ouvre le fichier dans Chrome.";
+      return false;
+    }
+    if (!res || res.ok === false || !res.numero) {
+      const msg = (res && res.error) || 'erreur inconnue';
+      hintEl.textContent = 'Refusé par le Drive : ' + msg;
+      showDuplicatePopup('Le Drive a refusé l\'enregistrement : ' + msg + '.', 'Enregistrement refusé');
+      return false;
+    }
+    assigned = { numero: res.numero, key: formKey() };
+    modifiedAfterSave = false;
+    if (els.centre.value) delete nextPreview[els.centre.value];
+    drive.key = '';
+    render();
+    refreshNext(true);
+    scheduleList(true);
+    hintEl.textContent = '✓ Enregistré dans le Drive sous le N° ' + res.numero + '.';
     return true;
   }
 
@@ -764,7 +850,7 @@
   }
   waInput.addEventListener('input', () => { waInput.dataset.touched = '1'; waInput.classList.remove('invalid'); });
   function validateForm(extraHintEl){
-    const requiredInputs = [els.numero, els.date, els.nom, els.payeur, els.centre, els.receveur, els.paye];
+    const requiredInputs = [els.date, els.nom, els.payeur, els.centre, els.receveur, els.paye];
     let firstInvalid = null;
     let ok = true;
 
@@ -827,7 +913,7 @@
     const paye = parseFloat(els.paye.value);
     const reste = Math.max(total - deja - (isNaN(paye) ? 0 : paye), 0);
     const moyen = getMoyen();
-    const numero = els.numero.value || '________';
+    const numero = els.numero.value || nextPreview[els.centre.value] || '________';
     const nom = els.nom.value || '';
     const centre = els.centre.value || '';
     const receveur = els.receveur.value || '';
@@ -896,6 +982,8 @@
   }
 
   function render(fromCheck){
+    syncNumero();
+    if (fromCheck !== true) refreshNext(false);
     const type = getType();
     els.moisRow.style.display = type === 'mensualite' ? '' : 'none';
     const total = currentAmount();
@@ -992,14 +1080,15 @@
     const btn = document.getElementById('downloadBtn');
     const hint = document.getElementById('downloadHint');
     if (!validateForm(hint)) return;
-    if (!(await guardDuplicate(hint))) return;
     const original = btn.textContent;
     btn.disabled = true;
+    btn.textContent = 'Enregistrement…';
+    if (!(await ensureSaved(hint))) { btn.disabled = false; btn.textContent = original; return; }
     btn.textContent = 'Génération du PDF…';
     try {
       const pdf = await buildPdf();
       pdf.save(pdfFilename());
-      hint.textContent = 'PDF téléchargé avec succès.' + (drive.status === 'error' ? ' (⚠ doublons non vérifiés : Drive injoignable)' : '');
+      hint.textContent = `PDF du reçu N° ${assigned.numero} téléchargé (enregistré dans le Drive).`;
     } catch (err) {
       console.warn(err);
       hint.textContent = "Le téléchargement a échoué (connexion internet requise la première fois). Utilise le bouton Imprimer en secours.";
@@ -1014,6 +1103,8 @@
     });
     document.querySelectorAll('input[name="moyen"], input[name="typePaiement"]').forEach(el => el.checked = false);
     els.centre.value = '';
+    assigned = null;
+    modifiedAfterSave = false;
     waInput.value = ''; waInput.dataset.touched = '';
     const now = new Date();
     els.mois.value = String(now.getMonth()+1).padStart(2,'0');
@@ -1023,26 +1114,6 @@
     render();
   });
 
-  // Fallback sender: hidden form posted into a hidden iframe (no fetch needed)
-  function postViaForm(url, payload){
-    return new Promise((resolve, reject) => {
-      const name = 'sheetFrame_' + Date.now();
-      const iframe = document.createElement('iframe');
-      iframe.name = name; iframe.style.display = 'none';
-      const form = document.createElement('form');
-      form.method = 'POST'; form.action = url; form.target = name; form.style.display = 'none';
-      const field = document.createElement('input');
-      field.type = 'hidden'; field.name = 'payload'; field.value = JSON.stringify(payload);
-      form.appendChild(field);
-      let done = false;
-      const finish = ok => { if (done) return; done = true; setTimeout(() => { iframe.remove(); form.remove(); }, 1000); ok ? resolve() : reject(new Error('timeout')); };
-      iframe.addEventListener('load', () => finish(true));
-      setTimeout(() => finish(false), 15000);
-      document.body.appendChild(iframe);
-      document.body.appendChild(form);
-      try { form.submit(); } catch (e) { finish(false); }
-    });
-  }
   document.getElementById('saveSheetBtn').addEventListener('click', async () => {
     const btn = document.getElementById('saveSheetBtn');
     const hint = document.getElementById('sheetHint');
@@ -1053,70 +1124,15 @@
       return;
     }
     if (!validateForm(hint)) return;
-    if (!(await guardDuplicate(hint))) return;
-    if (driveFresh() && drive.numero) {
-      hint.textContent = `Le reçu N° ${drive.numero.numero} est déjà enregistré dans le Drive — pas de doublon.`;
+    if (assigned && assigned.key === formKey()) {
+      hint.textContent = `Ce reçu est déjà enregistré dans le Drive sous le N° ${assigned.numero}.`;
       return;
     }
-    const type = getType();
-    const total = currentAmount();
-    const deja = previousPaid();
-    const paye = parseFloat(els.paye.value);
-    const reste = Math.max(total - deja - (isNaN(paye) ? 0 : paye), 0);
-    const moyen = getMoyen();
-
-    const payload = {
-      numero: els.numero.value,
-      date: els.date.value,
-      nom: els.nom.value,
-      payeur: els.payeur.value,
-      centre: els.centre.value,
-      type: typeLabel(type),
-      mois: moisLabel(getMoisKey()),
-      formation: 'Formations Week-End',
-      inscription: type === 'inscription' ? total : 0,
-      participation: type === 'mensualite' ? total : 0,
-      total: total,
-      paye: isNaN(paye) ? '' : paye,
-      reste: reste,
-      moyen: moyen || '',
-      receveur: els.receveur.value,
-      whatsapp: normalizePhone(waInput.value) ? prettyPhone(normalizePhone(waInput.value)) : ''
-    };
-
     const original = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Enregistrement…';
-
     try {
-      let res = null;
-      try {
-        res = await callScript({ action: 'save', payload: JSON.stringify(payload) });
-      } catch (jsonpErr) {
-        if (jsonpErr && jsonpErr.message === 'timeout') throw jsonpErr;
-        // Lecture de la réponse impossible : envoi classique (le script refuse de toute façon les doublons)
-        console.warn('envoi direct impossible, envoi classique', jsonpErr);
-        try {
-          await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
-        } catch (fetchErr) {
-          await postViaForm(url, payload);
-        }
-      }
-      if (res && res.ok === false) {
-        hint.textContent = 'Refusé par le Drive : ' + (res.error || 'erreur inconnue');
-        showDuplicatePopup('Le Drive a refusé l\'enregistrement : ' + (res.error || 'erreur inconnue') + '.', 'Enregistrement refusé');
-      } else if (res && res.ok) {
-        hint.textContent = '✓ Enregistré dans le Drive.';
-      } else {
-        hint.textContent = 'Envoyé (sans confirmation) — vérifie la nouvelle ligne dans la feuille Google.';
-      }
-      drive.key = ''; scheduleCheck(); scheduleList(true);
-      setTimeout(() => render(), 0);
-    } catch (err) {
-      console.warn(err);
-      hint.textContent = (err && err.message === 'timeout')
-        ? "Pas de réponse du Drive. Vérifie dans la feuille Google si la ligne a été ajoutée avant de réessayer (un doublon serait de toute façon refusé)."
-        : "Échec de l'envoi. Ouvre le fichier dans Chrome (pas dans l'aperçu de WhatsApp, Drive ou Claude) et vérifie ta connexion internet.";
+      await ensureSaved(hint);
     } finally {
       btn.disabled = false;
       btn.textContent = original;
@@ -1144,7 +1160,7 @@
       waWindow = window.open('', '_blank');
     }
 
-    if (!(await guardDuplicate(hint))) {
+    if (!(await ensureSaved(hint))) {
       if (waWindow) { try { waWindow.close(); } catch (e) {} }
       return;
     }
