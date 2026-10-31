@@ -335,6 +335,15 @@
 </style>
 </head>
 <body>
+<div class="dup-modal no-print" id="choiceModal" role="dialog" aria-modal="true" aria-labelledby="choiceTitle">
+  <div class="dup-modal-card" style="border-top-color:#111">
+    <h3 class="dup-modal-title" id="choiceTitle" style="color:#111"><span class="dup-modal-icon" style="background:#111">?</span> <span>Reçu non enregistré</span></h3>
+    <p class="dup-modal-msg" id="choiceMsg"></p>
+    <button type="button" class="btn" data-choice="save">Enregistrer dans le Drive puis continuer</button>
+    <button type="button" class="btn secondary" data-choice="nosave" style="margin-top:8px">Continuer sans enregistrer</button>
+    <button type="button" class="btn secondary" data-choice="cancel" style="margin-top:8px; border-color:transparent">Annuler</button>
+  </div>
+</div>
 <div class="dup-modal no-print" id="dupModal" role="alertdialog" aria-modal="true" aria-labelledby="dupModalTitle" aria-describedby="dupModalMsg">
   <div class="dup-modal-card">
     <h3 class="dup-modal-title" id="dupModalTitle"><span class="dup-modal-icon">!</span> Doublon détecté</h3>
@@ -451,12 +460,12 @@
         <input type="text" id="sheetUrl" placeholder="https://script.google.com/macros/s/.../exec" value="https://script.google.com/macros/s/AKfycbyIswn7r8YxzH-Vvh-zTJrlHRKgb3mtpP_YDwFb4Ux34LctVxGlDZ_VYU6BS4aCirjaCw/exec">
       </div>
       <button class="btn dark" id="saveSheetBtn">Enregistrer dans Google Sheets</button>
-      <div class="hint" id="sheetHint">Ajoute ce reçu dans la feuille Google et lui attribue son N° automatique. Télécharger le PDF ou l'envoyer par WhatsApp l'enregistre aussi automatiquement (une seule fois).</div>
+      <div class="hint" id="sheetHint">Ajoute ce reçu dans la feuille Google et lui attribue son N° automatique. Pour le PDF ou WhatsApp, l'app te demande si tu veux enregistrer ou non.</div>
     </div>
 
     <div class="panel-section">
       <h2>Reçus enregistrés dans le Drive</h2>
-      <div class="hint">Reçus de la personne indiquée dans « Reçu par », lus directement dans la feuille Google. Les doublons sont vérifiés dans cette feuille : une inscription par participant, une mensualité par mois, un seul usage par N° de reçu. Pour corriger une erreur, supprime la ligne dans la feuille Google.</div>
+      <div class="hint">Reçus de la personne indiquée dans « Reçu par », lus directement dans la feuille Google. Les doublons sont vérifiés dans cette feuille : une inscription par participant, une mensualité par mois. « Reprendre » recharge un reçu pour retélécharger son PDF ou le renvoyer, sans nouvel enregistrement. Pour corriger une erreur, modifie la ligne dans la feuille Google.</div>
       <button type="button" class="btn secondary" id="histRefresh" style="margin-top:8px">Actualiser la liste</button>
       <ul class="hist-list" id="histList"></ul>
     </div>
@@ -719,6 +728,15 @@
       + (!els.centre.value ? 'Choisis le centre pour voir le prochain N°.'
         : (prev ? `Prochain N° prévu : ${prev} (attribué à l'enregistrement).` : 'Le N° sera attribué à l\'enregistrement.'));
   }
+  let outdatedScript = false;
+  // N° de secours si le script ne donne pas d'aperçu : préfixe du centre + date/heure (ex : KAT-261016-120530)
+  const PREFIXES = { 'banakan bougou': 'BAN', 'sebenicoro': 'SEB', 'kati': 'KAT', 'titibougou': 'TIT' };
+  function proposedNumero(){
+    if (nextPreview[els.centre.value]) return nextPreview[els.centre.value];
+    const d = new Date(), z = n => String(n).padStart(2, '0');
+    return (PREFIXES[norm(els.centre.value)] || 'FWE') + '-' + String(d.getFullYear()).slice(2) + z(d.getMonth()+1) + z(d.getDate())
+      + '-' + z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds());
+  }
   function buildPayload(){
     const type = getType();
     const total = currentAmount();
@@ -753,7 +771,14 @@
     hintEl.textContent = 'Enregistrement dans le Drive et attribution du N°…';
     let res;
     try {
-      res = await callScript({ action: 'save', payload: JSON.stringify(buildPayload()) });
+      // N° proposé : utilisé seulement si le script Google n'attribue pas lui-même le N° (ancienne version)
+      const payload = buildPayload();
+      payload.numero = proposedNumero();
+      res = await callScript({ action: 'save', payload: JSON.stringify(payload) });
+      if (res && res.ok !== false && !res.numero) {
+        res.numero = payload.numero;
+        outdatedScript = true;
+      }
     } catch (err) {
       console.warn(err);
       hintEl.textContent = (err && err.message === 'timeout')
@@ -761,8 +786,8 @@
         : "Drive injoignable : le N° de reçu ne peut pas être attribué. Vérifie ta connexion internet et ouvre le fichier dans Chrome.";
       return false;
     }
-    if (!res || res.ok === false || !res.numero) {
-      const msg = (res && res.error) || 'erreur inconnue';
+    if (!res || res.ok === false) {
+      const msg = (res && res.error) || 'réponse vide du script Google';
       hintEl.textContent = 'Refusé par le Drive : ' + msg;
       showDuplicatePopup('Le Drive a refusé l\'enregistrement : ' + msg + '.', 'Enregistrement refusé');
       return false;
@@ -774,7 +799,8 @@
     render();
     refreshNext(true);
     scheduleList(true);
-    hintEl.textContent = '✓ Enregistré dans le Drive sous le N° ' + res.numero + '.';
+    hintEl.textContent = '✓ Enregistré dans le Drive sous le N° ' + res.numero + '.'
+      + (outdatedScript ? " (⚠ Le script Google n'est pas à jour : redéploie une « Nouvelle version » pour une numérotation fiable.)" : '');
     return true;
   }
 
@@ -800,9 +826,11 @@
         const res = await callScript({ action: 'list', receveur });
         if (key !== listKey) return;
         const items = (res && res.items) || [];
-        els.histList.innerHTML = items.length ? items.map(r => `
+        listItems = items;
+        els.histList.innerHTML = items.length ? items.map((r, i) => `
           <li><span><b>N° ${escapeHtml(r.numero)}</b> — ${escapeHtml(r.nom)}${r.centre ? ' (' + escapeHtml(r.centre) + ')' : ''}<br>
-            ${escapeHtml(r.type)}${r.mois ? ' ' + escapeHtml(r.mois) : ''} · ${fmt(parseFloat(r.paye)||0)}${r.date ? ' · ' + fmtDate(r.date) : ''}</span></li>`).join('')
+            ${escapeHtml(r.type)}${r.mois ? ' ' + escapeHtml(r.mois) : ''} · ${fmt(parseFloat(r.paye)||0)}${r.date ? ' · ' + fmtDate(r.date) : ''}</span>
+            <button type="button" data-idx="${i}" title="Recharger ce reçu pour retélécharger le PDF ou le renvoyer, sans nouvel enregistrement">Reprendre</button></li>`).join('')
           : '<li class="hist-empty">Aucun reçu enregistré dans le Drive pour ' + escapeHtml(receveur) + '.</li>';
       } catch (e) {
         if (key === listKey) els.histList.innerHTML = '<li class="hist-empty">⚠ Drive injoignable — liste indisponible.</li>';
@@ -810,6 +838,79 @@
     }, 700);
   }
   document.getElementById('histRefresh').addEventListener('click', () => scheduleList(true));
+
+  // ---- « Reprendre » : recharge un reçu déjà enregistré (même N°, aucun nouvel enregistrement)
+  let listItems = [];
+  function toIsoDate(v){
+    if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0,10);
+    const m = String(v).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    return m ? `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}` : '';
+  }
+  function loadReceipt(r){
+    els.date.value = toIsoDate(r.date) || els.date.value;
+    els.nom.value = r.nom || '';
+    els.payeur.value = r.payeur || '';
+    const opt = [...els.centre.options].find(o => norm(o.value) === norm(r.centre));
+    els.centre.value = opt ? opt.value : '';
+    els.receveur.value = r.receveur || els.receveur.value;
+    const t = norm(r.type) === 'inscription' ? 'inscription' : (norm(r.type) === 'mensualite' ? 'mensualite' : null);
+    document.querySelectorAll('input[name="typePaiement"]').forEach(el => el.checked = (el.value === t));
+    if (t === 'mensualite' && r.mois) {
+      const [mName, y] = String(r.mois).split(' ');
+      const mi = MOIS.findIndex(m => norm(m) === norm(mName));
+      if (mi >= 0) els.mois.value = String(mi+1).padStart(2,'0');
+      if (y) {
+        if (![...els.annee.options].some(o => o.value === y)) els.annee.add(new Option(y, y));
+        els.annee.value = y;
+      }
+    }
+    els.paye.value = r.paye != null ? r.paye : '';
+    document.querySelectorAll('input[name="moyen"]').forEach(el => el.checked = (norm(el.value) === norm(r.moyen)));
+    waInput.value = r.whatsapp || ''; waInput.dataset.touched = r.whatsapp ? '1' : '';
+    document.querySelectorAll('.invalid').forEach(el => el.classList.remove('invalid'));
+    assigned = { numero: r.numero, key: formKey() };
+    modifiedAfterSave = false;
+    drive.key = '';
+    render();
+    const msg = `Reçu N° ${r.numero} rechargé : tu peux retélécharger le PDF ou l'envoyer par WhatsApp sans nouvel enregistrement.`;
+    document.getElementById('downloadHint').textContent = msg;
+    document.getElementById('numeroHint').textContent = '✓ ' + msg;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  els.histList.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-idx]');
+    if (!btn) return;
+    const r = listItems[+btn.getAttribute('data-idx')];
+    if (r) loadReceipt(r);
+  });
+
+  // ---- Choix : enregistrer ou non avant PDF / WhatsApp
+  function askSaveChoice(actionLabel){
+    return new Promise(resolve => {
+      const modal = document.getElementById('choiceModal');
+      const prev = nextPreview[els.centre.value];
+      document.getElementById('choiceMsg').textContent =
+        `Ce reçu n'est pas encore enregistré dans le Drive. Veux-tu l'enregistrer (il reçoit alors son N° définitif${prev ? ', probablement ' + prev : ''}) avant de ${actionLabel} ? `
+        + `Sans enregistrement, le PDF porte un N° provisoire et rien n'est ajouté à la feuille.`;
+      modal.classList.add('show');
+      const onClick = e => {
+        const b = e.target.closest('button[data-choice]');
+        if (!b && e.target !== modal) return;
+        modal.classList.remove('show');
+        modal.removeEventListener('click', onClick);
+        resolve(b ? b.getAttribute('data-choice') : 'cancel');
+      };
+      modal.addEventListener('click', onClick);
+    });
+  }
+  // Retourne 'saved' | 'nosave' | null (annulé / échec)
+  async function prepareReceipt(hintEl, actionLabel){
+    if (assigned && assigned.key === formKey()) return 'saved';
+    const choice = await askSaveChoice(actionLabel);
+    if (choice === 'cancel') { hintEl.textContent = 'Annulé.'; return null; }
+    if (choice === 'nosave') return 'nosave';
+    return (await ensureSaved(hintEl)) ? 'saved' : null;
+  }
   // ---- WhatsApp contacts (per device)
   const CONTACTS_KEY = 'robotsmali_fwe_contacts_v1';
   const waInput = document.getElementById('waNumber');
@@ -913,7 +1014,8 @@
     const paye = parseFloat(els.paye.value);
     const reste = Math.max(total - deja - (isNaN(paye) ? 0 : paye), 0);
     const moyen = getMoyen();
-    const numero = els.numero.value || nextPreview[els.centre.value] || '________';
+    const numero = els.numero.value
+      || (nextPreview[els.centre.value] ? nextPreview[els.centre.value] + '<div class="k" style="margin-top:2px">provisoire</div>' : '________');
     const nom = els.nom.value || '';
     const centre = els.centre.value || '';
     const receveur = els.receveur.value || '';
@@ -1071,7 +1173,7 @@
   }
 
   function pdfFilename() {
-    const numero = sanitize(els.numero.value);
+    const numero = sanitize(els.numero.value || ((nextPreview[els.centre.value] || 'provisoire') + '_provisoire'));
     const nom = sanitize(els.nom.value);
     return `Recu_${nom}_${numero}.pdf`;
   }
@@ -1082,13 +1184,16 @@
     if (!validateForm(hint)) return;
     const original = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Enregistrement…';
-    if (!(await ensureSaved(hint))) { btn.disabled = false; btn.textContent = original; return; }
+    btn.textContent = 'Préparation…';
+    const mode = await prepareReceipt(hint, 'télécharger le PDF');
+    if (!mode) { btn.disabled = false; btn.textContent = original; return; }
     btn.textContent = 'Génération du PDF…';
     try {
       const pdf = await buildPdf();
       pdf.save(pdfFilename());
-      hint.textContent = `PDF du reçu N° ${assigned.numero} téléchargé (enregistré dans le Drive).`;
+      hint.textContent = mode === 'saved'
+        ? `PDF du reçu N° ${assigned.numero} téléchargé (enregistré dans le Drive).`
+        : 'PDF téléchargé avec un N° provisoire — ce reçu n\'est PAS enregistré dans le Drive.';
     } catch (err) {
       console.warn(err);
       hint.textContent = "Le téléchargement a échoué (connexion internet requise la première fois). Utilise le bouton Imprimer en secours.";
@@ -1152,15 +1257,17 @@
       return;
     }
 
-    // Open the window synchronously (within the click gesture) so the browser
-    // does not block it as a popup once we start doing async work below.
+    // Ask first (enregistrer ou non) — the click in the dialog is a fresh user gesture for window.open
+    let mode = (assigned && assigned.key === formKey()) ? 'saved' : await askSaveChoice('l\'envoyer par WhatsApp');
+    if (mode === 'cancel') { hint.textContent = 'Annulé.'; return; }
+
     const useShareSheet = !phone && !!navigator.canShare;
     let waWindow = null;
     if (!useShareSheet) {
       waWindow = window.open('', '_blank');
     }
 
-    if (!(await ensureSaved(hint))) {
+    if (mode === 'save' && !(await ensureSaved(hint))) {
       if (waWindow) { try { waWindow.close(); } catch (e) {} }
       return;
     }
