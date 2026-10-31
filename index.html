@@ -596,6 +596,7 @@
   }
   function explainError(err){
     const m = err && err.message;
+    if (m === 'no-number') return "Le script Google ne donne pas le N° du reçu (format KAT-0001) : il n'est pas à jour. Colle le dernier Code.gs, puis Déployer → Gérer les déploiements → ✏️ → « Nouvelle version ». Rien n'a été enregistré.";
     if (m === 'no-url') return "URL du script Google manquante (section Registre Google Sheets).";
     if (m === 'timeout') return "Pas de réponse du Drive (connexion lente ?). Regarde dans la feuille si le reçu a été ajouté avant de réessayer.";
     if (m === 'bad-response') return "Le script Google répond par une page au lieu des données : soit l'accès du déploiement n'est pas « Tout le monde », soit le script a une erreur, soit l'URL n'est plus la bonne.";
@@ -618,7 +619,18 @@
         out.innerHTML = '✗ Le script répond avec une erreur : ' + escapeHtml((res && res.error) || 'inconnue') + link;
       }
     } catch (e) {
-      out.innerHTML = '✗ ' + escapeHtml(explainError(e)) + link;
+      // Deuxième essai en lecture directe pour savoir ce que le script répond vraiment
+      let raw = null;
+      try { raw = await (await fetch(url + '?action=next&centre=Kati')).text(); } catch (_) {}
+      let res = null; try { res = JSON.parse(raw); } catch (_) {}
+      if (res && res.ok && !res.numero && !res.version) {
+        out.innerHTML = "⚠ Le script déployé est une <b>ancienne version</b> (celle du tout début) : c'est pour cela que les N° ont un format de secours. "
+          + "Colle le dernier Code.gs en entier dans Apps Script, puis Déployer → Gérer les déploiements → ✏️ → Version « Nouvelle version » → Déployer." + link;
+      } else if (res && res.numero) {
+        out.innerHTML = `✓ Le script est à jour (prochain N° Kati : ${escapeHtml(res.numero)}), mais la lecture directe des réponses est bloquée sur cet appareil. Ouvre le fichier dans Chrome.` + link;
+      } else {
+        out.innerHTML = '✗ ' + escapeHtml(explainError(e)) + link;
+      }
     }
   }
   document.getElementById('testBtn').addEventListener('click', testConnection);
@@ -766,11 +778,9 @@
   let outdatedScript = false;
   // N° de secours si le script ne donne pas d'aperçu : préfixe du centre + date/heure (ex : KAT-261016-120530)
   const PREFIXES = { 'banakan bougou': 'BAN', 'sebenicoro': 'SEB', 'kati': 'KAT', 'titibougou': 'TIT', 'badalabougou': 'BAD' };
+  // N° proposé = aperçu donné par le script (format KAT-0001 uniquement, jamais de N° de secours)
   function proposedNumero(){
-    if (nextPreview[els.centre.value]) return nextPreview[els.centre.value];
-    const d = new Date(), z = n => String(n).padStart(2, '0');
-    return (PREFIXES[norm(els.centre.value)] || 'FWE') + '-' + String(d.getFullYear()).slice(2) + z(d.getMonth()+1) + z(d.getDate())
-      + '-' + z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds());
+    return nextPreview[els.centre.value] || '';
   }
   function buildPayload(){
     const type = getType();
@@ -837,11 +847,14 @@
       } catch (err) {
         if (!err || err.message === 'timeout' || err.message === 'no-url') throw err;
         // Réponse illisible ou bloquée : envoi classique, comme au début (le script évite les lignes en double)
-        console.warn('envoi direct impossible, envoi classique', err);
+        console.warn('envoi direct impossible', err);
+        // Envoi classique seulement si l'on connaît déjà le vrai N° (format KAT-0001)
+        if (!payload.numero) throw new Error('no-number');
         await postClassic(scriptUrl(), payload);
         res = { ok: true, numero: payload.numero, unconfirmed: true };
       }
       if (res && res.ok !== false && !res.numero) {
+        if (!payload.numero) throw new Error('no-number');
         res.numero = payload.numero;
         outdatedScript = true;
       }
