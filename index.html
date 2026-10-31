@@ -392,6 +392,7 @@
         <option value="Sébénicôrô">Sébénicôrô</option>
         <option value="Kati">Kati</option>
         <option value="Titibougou">Titibougou</option>
+        <option value="Badalabougou">Badalabougou</option>
       </select>
     </div>
 
@@ -691,7 +692,7 @@
   }
 
   // ================= Numérotation automatique =================
-  // Le N° est attribué par le script Google au moment de l'enregistrement (unique, par centre).
+  // Le N° est attribué par le script Google au moment de l'enregistrement (unique, par centre : BAN, SEB, KAT, TIT, BAD).
   let assigned = null;          // { numero, key } une fois le reçu enregistré
   let nextPreview = {};         // { centre: 'KAT-0005' } — aperçu du prochain N°
   function formKey(){
@@ -730,7 +731,7 @@
   }
   let outdatedScript = false;
   // N° de secours si le script ne donne pas d'aperçu : préfixe du centre + date/heure (ex : KAT-261016-120530)
-  const PREFIXES = { 'banakan bougou': 'BAN', 'sebenicoro': 'SEB', 'kati': 'KAT', 'titibougou': 'TIT' };
+  const PREFIXES = { 'banakan bougou': 'BAN', 'sebenicoro': 'SEB', 'kati': 'KAT', 'titibougou': 'TIT', 'badalabougou': 'BAD' };
   function proposedNumero(){
     if (nextPreview[els.centre.value]) return nextPreview[els.centre.value];
     const d = new Date(), z = n => String(n).padStart(2, '0');
@@ -794,7 +795,7 @@
     }
     assigned = { numero: res.numero, key: formKey() };
     modifiedAfterSave = false;
-    if (els.centre.value) delete nextPreview[els.centre.value];
+    nextPreview = {};   // même suite pour tous les centres : l'aperçu doit être relu
     drive.key = '';
     render();
     refreshNext(true);
