@@ -339,7 +339,7 @@
   <div class="dup-modal-card" style="border-top-color:#111">
     <h3 class="dup-modal-title" id="choiceTitle" style="color:#111"><span class="dup-modal-icon" style="background:#111">?</span> <span>Reçu non enregistré</span></h3>
     <p class="dup-modal-msg" id="choiceMsg"></p>
-    <button type="button" class="btn" data-choice="save">Enregistrer dans le registre puis continuer</button>
+    <button type="button" class="btn" data-choice="save">Enregistrer dans le Drive puis continuer</button>
     <button type="button" class="btn secondary" data-choice="nosave" style="margin-top:8px">Continuer sans enregistrer</button>
     <button type="button" class="btn secondary" data-choice="cancel" style="margin-top:8px; border-color:transparent">Annuler</button>
   </div>
@@ -455,32 +455,20 @@
     </div>
 
     <div class="panel-section">
-      <h2>Registre en ligne</h2>
-      <button class="btn dark" id="saveSheetBtn">Enregistrer dans le registre</button>
-      <button type="button" class="btn secondary" id="testBtn" style="margin-top:8px">Tester la connexion</button>
+      <h2>Registre Google Sheets</h2>
+      <div class="field">
+        <label for="sheetUrl">URL du script (Google Apps Script)</label>
+        <input type="text" id="sheetUrl" placeholder="https://script.google.com/macros/s/.../exec" value="https://script.google.com/macros/s/AKfycbyFa5fWzswdpc_iL1ySLVmCt2QbAB95JLxkxVKsvbD8NuWHcXBGG0HaHVb5Us0eJe_q/exec">
+      </div>
+      <button class="btn dark" id="saveSheetBtn">Enregistrer dans Google Sheets</button>
+      <button type="button" class="btn secondary" id="testBtn" style="margin-top:8px">Tester la connexion au Drive</button>
       <div class="hint" id="testResult" style="font-size:12px"></div>
-      <div class="hint" id="sheetHint">Ajoute ce reçu dans le registre en ligne (Supabase) et lui attribue son N° automatique. Pour le PDF ou WhatsApp, l'app te demande si tu veux enregistrer ou non.</div>
-      <details id="cfgBox" style="margin-top:12px">
-        <summary style="cursor:pointer; font-size:12px; font-weight:600">Paramètres de connexion</summary>
-        <div class="field" style="margin-top:10px">
-          <label for="sbUrl">URL du projet Supabase</label>
-          <input type="text" id="sbUrl" placeholder="https://xxxxxxxx.supabase.co" autocomplete="off">
-        </div>
-        <div class="field">
-          <label for="sbKey">Clé publique (publishable / anon)</label>
-          <input type="text" id="sbKey" placeholder="sb_publishable_… ou eyJ…" autocomplete="off">
-        </div>
-        <div class="field">
-          <label for="sbCode">Code d'accès</label>
-          <input type="text" id="sbCode" placeholder="Code défini dans le script SQL" autocomplete="off" style="-webkit-text-security:disc">
-        </div>
-        <div class="hint">Ces réglages sont retenus sur cet appareil.</div>
-      </details>
+      <div class="hint" id="sheetHint">Ajoute ce reçu dans la feuille Google et lui attribue son N° automatique. Pour le PDF ou WhatsApp, l'app te demande si tu veux enregistrer ou non.</div>
     </div>
 
     <div class="panel-section">
-      <h2>Reçus enregistrés dans le registre</h2>
-      <div class="hint">Reçus de la personne indiquée dans « Reçu par », lus directement dans le registre en ligne. Les doublons sont vérifiés dans ce registre : une inscription par participant, une mensualité par mois. « Reprendre » recharge un reçu pour retélécharger son PDF ou le renvoyer, sans nouvel enregistrement. Pour corriger une erreur, modifie la ligne dans Supabase (Table Editor → recus).</div>
+      <h2>Reçus enregistrés dans le Drive</h2>
+      <div class="hint">Reçus de la personne indiquée dans « Reçu par », lus directement dans la feuille Google. Les doublons sont vérifiés dans cette feuille : une inscription par participant, une mensualité par mois. « Reprendre » recharge un reçu pour retélécharger son PDF ou le renvoyer, sans nouvel enregistrement. Pour corriger une erreur, modifie la ligne dans la feuille Google.</div>
       <button type="button" class="btn secondary" id="histRefresh" style="margin-top:8px">Actualiser la liste</button>
       <ul class="hist-list" id="histList"></ul>
     </div>
@@ -571,88 +559,66 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
-  // ================= Registre en ligne (Supabase) =================
-  // Le registre en ligne est la seule référence : on ne bloque que si le doublon y existe.
-  // Valeurs par défaut (remplies pour RobotsMali) — modifiables dans « Paramètres de connexion ».
-  const SUPABASE_URL_DEFAULT = 'https://atarywcyhvikhzthovhd.supabase.co';
-  const SUPABASE_KEY_DEFAULT = 'sb_publishable_UwvXK1ZlBbyfajaWCAN9Qg_LpZ98RAX';
-  const SUPABASE_CODE_DEFAULT = '';
-  const cfg = { url: document.getElementById('sbUrl'), key: document.getElementById('sbKey'), code: document.getElementById('sbCode') };
-  (function initCfg(){
-    const load = (k, d) => { try { return localStorage.getItem(k) || d; } catch(e){ return d; } };
-    cfg.url.value = load('robotsmali_fwe_sb_url', SUPABASE_URL_DEFAULT);
-    cfg.key.value = load('robotsmali_fwe_sb_key', SUPABASE_KEY_DEFAULT);
-    cfg.code.value = load('robotsmali_fwe_sb_code', SUPABASE_CODE_DEFAULT);
-    if (!cfg.url.value || !cfg.key.value || !cfg.code.value) document.getElementById('cfgBox').open = true;
-    [['url','robotsmali_fwe_sb_url'],['key','robotsmali_fwe_sb_key'],['code','robotsmali_fwe_sb_code']].forEach(([k, store]) => {
-      cfg[k].addEventListener('change', () => {
-        try { localStorage.setItem(store, cfg[k].value.trim()); } catch(e){}
-        nextPreview = {}; drive.key = ''; scheduleList(true); render();
-      });
+  // ================= Vérification dans le Drive (Google Sheets) =================
+  // La feuille Google est la seule référence : on ne bloque que si le doublon y existe.
+  const sheetUrlInput = document.getElementById('sheetUrl');
+  function scriptUrl(){ return sheetUrlInput.value.trim(); }
+  function jsonp(url, params, timeoutMs){
+    return new Promise((resolve, reject) => {
+      const cb = '__rmcb_' + Date.now() + '_' + Math.floor(Math.random()*1e6);
+      const script = document.createElement('script');
+      let timer = null;
+      const cleanup = () => { clearTimeout(timer); try { delete window[cb]; } catch(e){ window[cb] = undefined; } script.remove(); };
+      let done = false;
+      window[cb] = data => { done = true; cleanup(); resolve(data); };
+      script.onerror = () => { cleanup(); reject(new Error('network')); };
+      // Chargé mais le callback n'a pas été appelé : Google a renvoyé une page (connexion demandée, erreur du script…)
+      script.onload = () => { setTimeout(() => { if (!done) { cleanup(); window[cb] = () => {}; reject(new Error('bad-response')); } }, 50); };
+      timer = setTimeout(() => { cleanup(); window[cb] = () => {}; reject(new Error('timeout')); }, timeoutMs || 20000);
+      script.src = url + (url.includes('?') ? '&' : '?') + new URLSearchParams(Object.assign({}, params, { callback: cb })).toString();
+      document.body.appendChild(script);
     });
-  })();
-  // Renvoie l'URL si la connexion est configurée (sinon '')
-  function scriptUrl(){
-    return (cfg.url.value.trim() && cfg.key.value.trim() && cfg.code.value.trim()) ? cfg.url.value.trim() : '';
-  }
-  async function rpc(fn, args, timeoutMs){
-    const base = cfg.url.value.trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
-    const key = cfg.key.value.trim();
-    const headers = { 'Content-Type': 'application/json', 'apikey': key };
-    if (key.startsWith('eyJ')) headers['Authorization'] = 'Bearer ' + key;   // ancienne clé « anon »
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs || 20000);
-    let resp;
-    try {
-      resp = await fetch(base + '/rest/v1/rpc/' + fn, { method: 'POST', headers, body: JSON.stringify(args), signal: ctrl.signal });
-    } catch (e) {
-      throw new Error(e && e.name === 'AbortError' ? 'timeout' : 'network');
-    } finally { clearTimeout(timer); }
-    let data = null;
-    try { data = await resp.json(); } catch(e){}
-    if (!resp.ok) {
-      const msg = (data && (data.message || data.msg || data.hint || data.error)) || '';
-      if (/CODE_INVALIDE/.test(msg)) throw new Error('bad-code');
-      if (resp.status === 401 || resp.status === 403 || /api key/i.test(msg)) throw new Error('bad-key');
-      if (resp.status === 404 || /could not find the function/i.test(msg)) throw new Error('no-function');
-      throw new Error('server:' + (msg || ('HTTP ' + resp.status)));
-    }
-    return data;
   }
   async function callScript(params){
-    if (!scriptUrl()) throw new Error('no-url');
-    const code = cfg.code.value.trim();
-    switch (params.action) {
-      case 'ping':  return rpc('fwe_ping',  { p_code: code }, 15000);
-      case 'next':  return rpc('fwe_next',  { p_code: code, p_centre: params.centre });
-      case 'check': return rpc('fwe_check', { p_code: code, p_nom: params.nom, p_receveur: params.receveur,
-                                              p_type: params.type, p_mois: params.mois, p_numero: params.numero });
-      case 'list':  return rpc('fwe_list',  { p_code: code, p_receveur: params.receveur });
-      case 'save':  return rpc('fwe_save',  { p_code: code, p_data: JSON.parse(params.payload) });
+    const url = scriptUrl();
+    if (!url) throw new Error('no-url');
+    try {
+      return await jsonp(url, params);
+    } catch (e) {
+      if (params.action === 'save') throw e;      // never retry a save blindly
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 20000);
+      try {
+        const r = await fetch(url + '?' + new URLSearchParams(params).toString(), { signal: ctrl.signal });
+        return await r.json();
+      } finally { clearTimeout(t); }
     }
-    throw new Error('server:action inconnue');
   }
   function explainError(err){
-    const m = (err && err.message) || '';
-    if (m === 'no-url') return "Connexion au registre non configurée : remplis les « Paramètres de connexion » (section Registre en ligne).";
-    if (m === 'timeout') return "Pas de réponse du registre (connexion lente ?). Regarde dans la liste si le reçu a été ajouté avant de réessayer.";
-    if (m === 'bad-code') return "Code d'accès incorrect (Paramètres de connexion).";
-    if (m === 'bad-key') return "Clé Supabase refusée : vérifie l'URL et la clé publique (Paramètres de connexion).";
-    if (m === 'no-function') return "Le registre n'est pas installé : lance le script supabase.sql dans Supabase (SQL Editor).";
-    if (m.startsWith('server:')) return 'Erreur du registre : ' + m.slice(7);
-    return "Registre injoignable : vérifie la connexion internet et ouvre le fichier dans Chrome (pas dans un aperçu).";
+    const m = err && err.message;
+    if (m === 'no-url') return "URL du script Google manquante (section Registre Google Sheets).";
+    if (m === 'timeout') return "Pas de réponse du Drive (connexion lente ?). Regarde dans la feuille si le reçu a été ajouté avant de réessayer.";
+    if (m === 'bad-response') return "Le script Google répond par une page au lieu des données : soit l'accès du déploiement n'est pas « Tout le monde », soit le script a une erreur, soit l'URL n'est plus la bonne.";
+    return "Drive injoignable : vérifie la connexion internet et ouvre le fichier dans Chrome (pas dans un aperçu).";
   }
-  // Bouton « Tester la connexion »
+  // Bouton « Tester la connexion au Drive »
   async function testConnection(){
     const out = document.getElementById('testResult');
+    const url = scriptUrl();
+    if (!url) { out.textContent = '✗ URL du script manquante.'; return; }
     out.textContent = 'Test en cours…';
+    const link = `<br><a href="${escapeHtml(url + '?action=next&centre=Kati')}" target="_blank" rel="noopener">Ouvrir l'adresse de test dans un nouvel onglet</a>`;
     try {
-      await callScript({ action: 'ping' });
-      const res = await callScript({ action: 'next', centre: els.centre.value || 'Kati' });
-      out.textContent = `✓ Connexion OK — prochain N° ${els.centre.value || 'Kati'} : ${res.numero}.`;
+      const res = await jsonp(url, { action: 'next', centre: 'Kati' }, 15000);
+      if (res && res.numero) {
+        out.innerHTML = `✓ Connexion OK — script à jour (prochain N° Kati : ${escapeHtml(res.numero)}).`;
+      } else if (res && res.ok) {
+        out.innerHTML = "⚠ Le script répond, mais c'est une ancienne version : colle le dernier Code.gs puis Déployer → Gérer les déploiements → ✏️ → « Nouvelle version »." + link;
+      } else {
+        out.innerHTML = '✗ Le script répond avec une erreur : ' + escapeHtml((res && res.error) || 'inconnue') + link;
+      }
     } catch (e) {
-      out.textContent = '✗ ' + explainError(e);
-      document.getElementById('cfgBox').open = true;
+      out.innerHTML = '✗ ' + escapeHtml(explainError(e)) + link;
     }
   }
   document.getElementById('testBtn').addEventListener('click', testConnection);
@@ -684,7 +650,7 @@
       if (!res || res.ok === false) throw new Error(res && res.error || 'error');
       if (checkKey() === key) drive = { key, status: 'ok', numero: null, previous: res.previous || [] };
     } catch (e) {
-      console.warn('Vérification du registre impossible', e);
+      console.warn('Vérification Drive impossible', e);
       if (checkKey() === key) drive = { key, status: 'error', numero: null, previous: [] };
     }
     return drive;
@@ -699,7 +665,7 @@
   function previousPaid(){
     return driveFresh() ? drive.previous.reduce((s,r) => s + (parseFloat(r.paye) || 0), 0) : 0;
   }
-  // Message de doublon basé UNIQUEMENT sur les données du registre (null = pas de doublon)
+  // Message de doublon basé UNIQUEMENT sur les données du Drive (null = pas de doublon)
   function checkDuplicate(){
     if (!driveFresh()) return null;
     const type = getType();
@@ -709,18 +675,18 @@
       const nums = drive.previous.map(p => 'N° ' + p.numero + (p.date ? ' du ' + fmtDate(p.date) : '')).join(', ');
       const receveur = els.receveur.value.trim(), nom = els.nom.value.trim();
       return type === 'inscription'
-        ? `Doublon (trouvé dans le registre) : ${receveur} a déjà encaissé l'inscription de ${nom} (${nums}). L'inscription n'est payable qu'une seule fois.`
-        : `Doublon (trouvé dans le registre) : ${receveur} a déjà encaissé la mensualité de ${moisLabel(getMoisKey())} pour ${nom} (${nums}). Choisis un autre mois.`;
+        ? `Doublon (trouvé dans le Drive) : ${receveur} a déjà encaissé l'inscription de ${nom} (${nums}). L'inscription n'est payable qu'une seule fois.`
+        : `Doublon (trouvé dans le Drive) : ${receveur} a déjà encaissé la mensualité de ${moisLabel(getMoisKey())} pour ${nom} (${nums}). Choisis un autre mois.`;
     }
     return null;
   }
   function driveStatusText(){
-    if (!scriptUrl()) return 'Vérification des doublons désactivée : connexion au registre non configurée.';
-    if (drive.key !== checkKey() || drive.status === 'loading') return 'Vérification dans le registre…';
+    if (!scriptUrl()) return 'Vérification des doublons désactivée : URL du script Google manquante.';
+    if (drive.key !== checkKey() || drive.status === 'loading') return 'Vérification dans le Drive…';
     if (drive.status === 'off') return '';
-    if (drive.status === 'error') return '⚠ Registre injoignable : vérification des doublons impossible pour le moment (connexion internet ?).';
-    if (assigned) return '✓ Ce reçu est enregistré dans le registre sous le N° ' + assigned.numero + '.';
-    return checkDuplicate() ? '' : '✓ Vérifié dans le registre : aucun doublon.';
+    if (drive.status === 'error') return '⚠ Drive injoignable : vérification des doublons impossible pour le moment (connexion internet ?).';
+    if (assigned) return '✓ Ce reçu est enregistré dans le Drive sous le N° ' + assigned.numero + '.';
+    return checkDuplicate() ? '' : '✓ Vérifié dans le Drive : aucun doublon.';
   }
   // ---- Fenêtre « Doublon détecté »
   const dupModal = document.getElementById('dupModal');
@@ -741,10 +707,10 @@
   dupModal.addEventListener('click', e => { if (e.target === dupModal) hideDuplicatePopup(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') hideDuplicatePopup(); });
 
-  // Vérifie à nouveau dans le registre juste avant une action. Bloque seulement si le doublon existe dans le registre.
+  // Vérifie à nouveau dans le Drive juste avant une action. Bloque seulement si le doublon existe dans le Drive.
   async function guardDuplicate(hintEl){
     if (scriptUrl()) {
-      if (hintEl) hintEl.textContent = 'Vérification dans le registre…';
+      if (hintEl) hintEl.textContent = 'Vérification dans le Drive…';
       clearTimeout(checkTimer);
       await runCheck();
       render(true);
@@ -755,12 +721,12 @@
       showDuplicatePopup(msg + ' Aucun reçu n\'a été créé.');
       return false;
     }
-    if (hintEl && drive.status === 'error') hintEl.textContent = '⚠ Registre injoignable : le reçu est créé sans vérification des doublons.';
+    if (hintEl && drive.status === 'error') hintEl.textContent = '⚠ Drive injoignable : le reçu est créé sans vérification des doublons.';
     return true;
   }
 
   // ================= Numérotation automatique =================
-  // Le N° est attribué par le registre en ligne au moment de l'enregistrement (unique, par centre : BAN, SEB, KAT, TIT, BAD).
+  // Le N° est attribué par le script Google au moment de l'enregistrement (unique, par centre : BAN, SEB, KAT, TIT, BAD).
   let assigned = null;          // { numero, key } une fois le reçu enregistré
   let nextPreview = {};         // { centre: 'KAT-0005' } — aperçu du prochain N°
   function formKey(){
@@ -788,7 +754,7 @@
     const hintEl = document.getElementById('numeroHint');
     if (assigned) {
       els.numero.value = assigned.numero;
-      hintEl.textContent = '✓ N° attribué et enregistré dans le registre.';
+      hintEl.textContent = '✓ N° attribué et enregistré dans le Drive.';
       return;
     }
     els.numero.value = '';
@@ -829,21 +795,52 @@
       whatsapp: normalizePhone(waInput.value) ? prettyPhone(normalizePhone(waInput.value)) : ''
     };
   }
-  // Enregistre le reçu dans le registre (si ce n'est pas déjà fait) et récupère son N° automatique.
+  // Enregistre le reçu dans le Drive (si ce n'est pas déjà fait) et récupère son N° automatique.
+  // Envoi classique (comme la toute première version) : POST sans lecture de la réponse, puis formulaire en secours
+  async function postClassic(url, payload){
+    try {
+      await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
+      return;
+    } catch (e) { console.warn('fetch bloqué, envoi par formulaire', e); }
+    await new Promise((resolve, reject) => {
+      const name = 'sheetFrame_' + Date.now();
+      const iframe = document.createElement('iframe');
+      iframe.name = name; iframe.style.display = 'none';
+      const form = document.createElement('form');
+      form.method = 'POST'; form.action = url; form.target = name; form.style.display = 'none';
+      const field = document.createElement('input');
+      field.type = 'hidden'; field.name = 'payload'; field.value = JSON.stringify(payload);
+      form.appendChild(field);
+      let done = false;
+      const finish = ok => { if (done) return; done = true; setTimeout(() => { iframe.remove(); form.remove(); }, 1000); ok ? resolve() : reject(new Error('network')); };
+      iframe.addEventListener('load', () => finish(true));
+      setTimeout(() => finish(false), 15000);
+      document.body.appendChild(iframe); document.body.appendChild(form);
+      try { form.submit(); } catch (e) { finish(false); }
+    });
+  }
   async function ensureSaved(hintEl){
     if (assigned && assigned.key === formKey()) return true;
     if (!scriptUrl()) {
-      hintEl.textContent = "Connexion au registre non configurée : impossible d'attribuer un N° de reçu.";
+      hintEl.textContent = "URL du script Google manquante : impossible d'attribuer un N° de reçu.";
       return false;
     }
     if (!(await guardDuplicate(hintEl))) return false;
-    hintEl.textContent = 'Enregistrement dans le registre et attribution du N°…';
+    hintEl.textContent = 'Enregistrement dans le Drive et attribution du N°…';
     let res;
     try {
-      // N° proposé (ignoré par le registre, qui attribue lui-même le N°)
+      // N° proposé : utilisé seulement si le script Google n'attribue pas lui-même le N° (ancienne version)
       const payload = buildPayload();
       payload.numero = proposedNumero();
-      res = await callScript({ action: 'save', payload: JSON.stringify(payload) });
+      try {
+        res = await callScript({ action: 'save', payload: JSON.stringify(payload) });
+      } catch (err) {
+        if (!err || err.message === 'timeout' || err.message === 'no-url') throw err;
+        // Réponse illisible ou bloquée : envoi classique, comme au début (le script évite les lignes en double)
+        console.warn('envoi direct impossible, envoi classique', err);
+        await postClassic(scriptUrl(), payload);
+        res = { ok: true, numero: payload.numero, unconfirmed: true };
+      }
       if (res && res.ok !== false && !res.numero) {
         res.numero = payload.numero;
         outdatedScript = true;
@@ -851,27 +848,30 @@
     } catch (err) {
       console.warn(err);
       hintEl.textContent = explainError(err);
-      showDuplicatePopup(explainError(err) + ' Utilise « Tester la connexion » pour plus de détails.', 'Enregistrement impossible');
+      showDuplicatePopup(explainError(err) + ' Utilise « Tester la connexion au Drive » pour plus de détails.', 'Enregistrement impossible');
       return false;
     }
     if (!res || res.ok === false) {
-      const msg = (res && res.error) || 'réponse vide du registre';
-      hintEl.textContent = 'Refusé par le registre : ' + msg;
-      showDuplicatePopup('Le registre a refusé l\'enregistrement : ' + msg + '.', 'Enregistrement refusé');
+      const msg = (res && res.error) || 'réponse vide du script Google';
+      hintEl.textContent = 'Refusé par le Drive : ' + msg;
+      showDuplicatePopup('Le Drive a refusé l\'enregistrement : ' + msg + '.', 'Enregistrement refusé');
       return false;
     }
-    assigned = { numero: res.numero, key: formKey() };
+    assigned = { numero: res.numero, key: formKey(), unconfirmed: !!res.unconfirmed };
     modifiedAfterSave = false;
     nextPreview = {};   // même suite pour tous les centres : l'aperçu doit être relu
     drive.key = '';
     render();
     refreshNext(true);
     scheduleList(true);
-    hintEl.textContent = '✓ Enregistré dans le registre sous le N° ' + res.numero + '.';
+    hintEl.textContent = (res.unconfirmed
+        ? `Envoyé au Drive sous le N° ${res.numero} (sans confirmation) — vérifie la nouvelle ligne dans la feuille Google.`
+        : '✓ Enregistré dans le Drive sous le N° ' + res.numero + '.')
+      + (outdatedScript ? " (⚠ Le script Google n'est pas à jour : redéploie une « Nouvelle version » pour une numérotation fiable.)" : '');
     return true;
   }
 
-  // ---- Liste des reçus enregistrés dans le registre pour « Reçu par »
+  // ---- Liste des reçus enregistrés dans le Drive pour « Reçu par »
   let listKey = null, listTimer = null;
   function scheduleList(force){
     const receveur = els.receveur.value.trim();
@@ -883,10 +883,10 @@
       return;
     }
     if (!scriptUrl()) {
-      els.histList.innerHTML = '<li class="hist-empty">Connexion au registre non configurée.</li>';
+      els.histList.innerHTML = '<li class="hist-empty">URL du script Google manquante.</li>';
       return;
     }
-    els.histList.innerHTML = '<li class="hist-empty">Chargement depuis le registre…</li>';
+    els.histList.innerHTML = '<li class="hist-empty">Chargement depuis le Drive…</li>';
     listTimer = setTimeout(async () => {
       const key = listKey;
       try {
@@ -898,9 +898,9 @@
           <li><span><b>N° ${escapeHtml(r.numero)}</b> — ${escapeHtml(r.nom)}${r.centre ? ' (' + escapeHtml(r.centre) + ')' : ''}<br>
             ${escapeHtml(r.type)}${r.mois ? ' ' + escapeHtml(r.mois) : ''} · ${fmt(parseFloat(r.paye)||0)}${r.date ? ' · ' + fmtDate(r.date) : ''}</span>
             <button type="button" data-idx="${i}" title="Recharger ce reçu pour retélécharger le PDF ou le renvoyer, sans nouvel enregistrement">Reprendre</button></li>`).join('')
-          : '<li class="hist-empty">Aucun reçu enregistré dans le registre pour ' + escapeHtml(receveur) + '.</li>';
+          : '<li class="hist-empty">Aucun reçu enregistré dans le Drive pour ' + escapeHtml(receveur) + '.</li>';
       } catch (e) {
-        if (key === listKey) els.histList.innerHTML = '<li class="hist-empty">⚠ Registre injoignable — liste indisponible.</li>';
+        if (key === listKey) els.histList.innerHTML = '<li class="hist-empty">⚠ Drive injoignable — liste indisponible.</li>';
       }
     }, 700);
   }
@@ -957,7 +957,7 @@
       const modal = document.getElementById('choiceModal');
       const prev = nextPreview[els.centre.value];
       document.getElementById('choiceMsg').textContent =
-        `Ce reçu n'est pas encore enregistré dans le registre. Veux-tu l'enregistrer (il reçoit alors son N° définitif${prev ? ', probablement ' + prev : ''}) avant de ${actionLabel} ? `
+        `Ce reçu n'est pas encore enregistré dans le Drive. Veux-tu l'enregistrer (il reçoit alors son N° définitif${prev ? ', probablement ' + prev : ''}) avant de ${actionLabel} ? `
         + `Sans enregistrement, le PDF porte un N° provisoire et rien n'est ajouté à la feuille.`;
       modal.classList.add('show');
       const onClick = e => {
@@ -1259,8 +1259,8 @@
       const pdf = await buildPdf();
       pdf.save(pdfFilename());
       hint.textContent = mode === 'saved'
-        ? `PDF du reçu N° ${assigned.numero} téléchargé (enregistré dans le registre).`
-        : 'PDF téléchargé avec un N° provisoire — ce reçu n\'est PAS enregistré dans le registre.';
+        ? `PDF du reçu N° ${assigned.numero} téléchargé (${assigned.unconfirmed ? 'envoyé au Drive sans confirmation — vérifie la feuille' : 'enregistré dans le Drive'}).`
+        : 'PDF téléchargé avec un N° provisoire — ce reçu n\'est PAS enregistré dans le Drive.';
     } catch (err) {
       console.warn(err);
       hint.textContent = "Le téléchargement a échoué (connexion internet requise la première fois). Utilise le bouton Imprimer en secours.";
@@ -1271,7 +1271,7 @@
   });
   document.getElementById('resetBtn').addEventListener('click', () => {
     document.querySelectorAll('.panel input[type=text], .panel input[type=number], .panel input[type=date]').forEach(el => {
-      if (!el.closest('#cfgBox')) el.value = '';
+      if (el.id !== 'sheetUrl') el.value = '';
     });
     document.querySelectorAll('input[name="moyen"], input[name="typePaiement"]').forEach(el => el.checked = false);
     els.centre.value = '';
@@ -1289,14 +1289,15 @@
   document.getElementById('saveSheetBtn').addEventListener('click', async () => {
     const btn = document.getElementById('saveSheetBtn');
     const hint = document.getElementById('sheetHint');
-    if (!scriptUrl()) {
-      hint.textContent = explainError(new Error('no-url'));
-      document.getElementById('cfgBox').open = true;
+    const url = document.getElementById('sheetUrl').value.trim();
+
+    if (!url) {
+      hint.textContent = "Colle d'abord l'URL de ton script Google Apps Script ci-dessus.";
       return;
     }
     if (!validateForm(hint)) return;
     if (assigned && assigned.key === formKey()) {
-      hint.textContent = `Ce reçu est déjà enregistré dans le registre sous le N° ${assigned.numero}.`;
+      hint.textContent = `Ce reçu est déjà enregistré dans le Drive sous le N° ${assigned.numero}.`;
       return;
     }
     const original = btn.textContent;
@@ -1408,6 +1409,15 @@
 
   // default date = today
   els.date.value = new Date().toISOString().slice(0,10);
+  // Remember the Google Apps Script URL on this device
+  (function(){
+    const urlInput = document.getElementById('sheetUrl');
+    try { const saved = localStorage.getItem('robotsmali_fwe_sheet_url_v2'); if (saved) urlInput.value = saved; } catch(e){}
+    urlInput.addEventListener('change', () => {
+      try { localStorage.setItem('robotsmali_fwe_sheet_url_v2', urlInput.value.trim()); } catch(e){}
+      drive.key = ''; scheduleList(true); render();
+    });
+  })();
   renderContacts();
   render();
 </script>
