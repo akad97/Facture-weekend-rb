@@ -461,6 +461,8 @@
         <input type="text" id="sheetUrl" placeholder="https://script.google.com/macros/s/.../exec" value="https://script.google.com/macros/s/AKfycbyIswn7r8YxzH-Vvh-zTJrlHRKgb3mtpP_YDwFb4Ux34LctVxGlDZ_VYU6BS4aCirjaCw/exec">
       </div>
       <button class="btn dark" id="saveSheetBtn">Enregistrer dans Google Sheets</button>
+      <button type="button" class="btn secondary" id="testBtn" style="margin-top:8px">Tester la connexion au Drive</button>
+      <div class="hint" id="testResult" style="font-size:12px"></div>
       <div class="hint" id="sheetHint">Ajoute ce reçu dans la feuille Google et lui attribue son N° automatique. Pour le PDF ou WhatsApp, l'app te demande si tu veux enregistrer ou non.</div>
     </div>
 
@@ -567,8 +569,11 @@
       const script = document.createElement('script');
       let timer = null;
       const cleanup = () => { clearTimeout(timer); try { delete window[cb]; } catch(e){ window[cb] = undefined; } script.remove(); };
-      window[cb] = data => { cleanup(); resolve(data); };
+      let done = false;
+      window[cb] = data => { done = true; cleanup(); resolve(data); };
       script.onerror = () => { cleanup(); reject(new Error('network')); };
+      // Chargé mais le callback n'a pas été appelé : Google a renvoyé une page (connexion demandée, erreur du script…)
+      script.onload = () => { setTimeout(() => { if (!done) { cleanup(); window[cb] = () => {}; reject(new Error('bad-response')); } }, 50); };
       timer = setTimeout(() => { cleanup(); window[cb] = () => {}; reject(new Error('timeout')); }, timeoutMs || 20000);
       script.src = url + (url.includes('?') ? '&' : '?') + new URLSearchParams(Object.assign({}, params, { callback: cb })).toString();
       document.body.appendChild(script);
@@ -589,6 +594,35 @@
       } finally { clearTimeout(t); }
     }
   }
+  function explainError(err){
+    const m = err && err.message;
+    if (m === 'no-url') return "URL du script Google manquante (section Registre Google Sheets).";
+    if (m === 'timeout') return "Pas de réponse du Drive (connexion lente ?). Regarde dans la feuille si le reçu a été ajouté avant de réessayer.";
+    if (m === 'bad-response') return "Le script Google répond par une page au lieu des données : soit l'accès du déploiement n'est pas « Tout le monde », soit le script a une erreur, soit l'URL n'est plus la bonne.";
+    return "Drive injoignable : vérifie la connexion internet et ouvre le fichier dans Chrome (pas dans un aperçu).";
+  }
+  // Bouton « Tester la connexion au Drive »
+  async function testConnection(){
+    const out = document.getElementById('testResult');
+    const url = scriptUrl();
+    if (!url) { out.textContent = '✗ URL du script manquante.'; return; }
+    out.textContent = 'Test en cours…';
+    const link = `<br><a href="${escapeHtml(url + '?action=next&centre=Kati')}" target="_blank" rel="noopener">Ouvrir l'adresse de test dans un nouvel onglet</a>`;
+    try {
+      const res = await jsonp(url, { action: 'next', centre: 'Kati' }, 15000);
+      if (res && res.numero) {
+        out.innerHTML = `✓ Connexion OK — script à jour (prochain N° Kati : ${escapeHtml(res.numero)}).`;
+      } else if (res && res.ok) {
+        out.innerHTML = "⚠ Le script répond, mais c'est une ancienne version : colle le dernier Code.gs puis Déployer → Gérer les déploiements → ✏️ → « Nouvelle version »." + link;
+      } else {
+        out.innerHTML = '✗ Le script répond avec une erreur : ' + escapeHtml((res && res.error) || 'inconnue') + link;
+      }
+    } catch (e) {
+      out.innerHTML = '✗ ' + escapeHtml(explainError(e)) + link;
+    }
+  }
+  document.getElementById('testBtn').addEventListener('click', testConnection);
+
   function checkParams(){
     return {
       action: 'check',
@@ -782,9 +816,8 @@
       }
     } catch (err) {
       console.warn(err);
-      hintEl.textContent = (err && err.message === 'timeout')
-        ? "Pas de réponse du Drive. Regarde dans la feuille Google si le reçu a été ajouté avant de réessayer."
-        : "Drive injoignable : le N° de reçu ne peut pas être attribué. Vérifie ta connexion internet et ouvre le fichier dans Chrome.";
+      hintEl.textContent = explainError(err);
+      showDuplicatePopup(explainError(err) + ' Utilise « Tester la connexion au Drive » pour plus de détails.', 'Enregistrement impossible');
       return false;
     }
     if (!res || res.ok === false) {
